@@ -155,9 +155,16 @@ export function filterData(
   // Special handling for regional segment types: "By Region", "By State", "By Country"
   // These segment types have geographies as segments, so the hierarchy is different
   // Don't force aggregation level 2 for these - let all records through
-  const isRegionalSegmentType = filters.segmentType === 'By Region' ||
-                                 filters.segmentType === 'By State' ||
-                                 filters.segmentType === 'By Country'
+  // BUT only if the records actually have geography overrides (i.e., region names as geographies)
+  // When By Region is a regular segment type (geography stays as "India"), treat it normally
+  const isRegionName = filters.segmentType === 'By Region' ||
+                       filters.segmentType === 'By State' ||
+                       filters.segmentType === 'By Country'
+  // Check if By Region records have geography matching a selected geography
+  // If so, By Region is a regular segment type, not a geography dimension
+  const byRegionIsRegularSegment = isRegionName && filters.geographies.length > 0 &&
+    data.some(r => r.segment_type === filters.segmentType && filters.geographies.includes(r.geography))
+  const isRegionalSegmentType = isRegionName && !byRegionIsRegularSegment
 
   // If aggregationLevel is explicitly set to null or undefined, use automatic detection
   if (effectiveAggregationLevel === null || effectiveAggregationLevel === undefined) {
@@ -361,15 +368,22 @@ export function filterData(
       // Check if this record's segment is one of the explicitly selected segments
       const isExplicitlySelectedSegment = selectedLevel1Segments.includes(record.segment)
 
+      // Determine behavior based on viewMode:
+      // - segment-mode: Show CHILDREN of selected parent (not the parent total)
+      // - geography-mode: Show the parent TOTAL (not children, to avoid double-counting)
+      const isSegmentMode = filters.viewMode === 'segment-mode'
+
       if (record.is_aggregated === true) {
         // Aggregated (parent) records contain totals that overlap with their children.
-        // To prevent double-counting:
-        // - If user explicitly selected THIS segment, INCLUDE the parent total
-        //   (children will be excluded below)
-        // - Otherwise, exclude aggregated records
         if (isExplicitlySelectedSegment) {
-          // User selected this exact parent segment - show its total
-          // Allow through
+          if (isSegmentMode) {
+            // In segment-mode, we want to show children, not parent total
+            // Exclude aggregated parent - children will be included below
+            return false
+          } else {
+            // In geography-mode, show the parent total
+            // Allow through
+          }
         } else if (!isRegionalSegmentType) {
           return false
         }
@@ -397,18 +411,20 @@ export function filterData(
               }
             }
           } else {
-            // Check if this leaf's parent is one of the explicitly selected segments
-            // If so, the aggregated parent record is already included - skip the leaf to avoid double-counting
             const hierarchy = record.segment_hierarchy
             const parentIsSelected = selectedLevel1Segments.some(selectedSeg =>
               hierarchy.level_1 === selectedSeg
             )
 
             if (parentIsSelected && !isExplicitlySelectedSegment) {
-              // Parent aggregated record is already included - exclude this leaf child
-              // BUT if this leaf IS the explicitly selected segment (flat segment with no children),
-              // include it because there's no separate aggregated parent record for flat segments
-              return false
+              if (isSegmentMode) {
+                // In segment-mode, INCLUDE leaf children of selected parent
+                // This shows α-Amylase, Glucoamylase, Pullulanase when "Amylolytic Enzymes" is selected
+                // Allow through
+              } else {
+                // In geography-mode, parent aggregated record is already included - exclude children
+                return false
+              }
             }
 
             // For other cases, check if this leaf belongs to any selected segment
@@ -449,9 +465,8 @@ export function filterData(
     // Special handling for "By Region" segment type
     // For "By Region", the selected "segment" is actually a geography name (like "North America")
     // and we need to match records where record.geography === selected segment
-    const isRegionSegmentType = filters.segmentType === 'By Region' ||
-                                filters.segmentType === 'By State' ||
-                                filters.segmentType === 'By Country'
+    // Only apply when By Region is a geography dimension (records have geography overrides)
+    const isRegionSegmentType = isRegionalSegmentType
 
     // Check if we're using advancedSegments (multi-type selection)
     if (filters.advancedSegments && filters.advancedSegments.length > 0) {
@@ -716,15 +731,17 @@ export function prepareGroupedBarData(
   // This ensures chart data preparation uses the same level detection
   let effectiveAggregationLevel = aggregationLevel
 
-  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button),
+  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button or SegmentMultiSelect),
   // we should NOT apply automatic Level 2 aggregation - we want to show the sub-segments individually
-  const hasUserSelectedSegments = selectedSegmentNames.length > 0
+  const regularSegments = filters.segments || []
+  const hasUserSelectedSegments = selectedSegmentNames.length > 0 || regularSegments.length > 0
 
   if (effectiveAggregationLevel === null || effectiveAggregationLevel === undefined) {
     const segmentsFromSameType = advancedSegments.filter(
       (seg: any) => seg.type === filters.segmentType
     )
-    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0
+    // Check both advancedSegments AND regular segments (from SegmentMultiSelect)
+    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0 || regularSegments.length > 0
 
     if (!hasSegmentsForCurrentType) {
       // No segments selected for this segment type - default to Level 2 (show parent segments)
@@ -1148,9 +1165,10 @@ export function prepareLineChartData(
     .filter((seg: any) => seg.type === filters.segmentType)
     .map((seg: any) => seg.segment)
 
-  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button),
+  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button or SegmentMultiSelect),
   // we should NOT apply automatic Level 2 aggregation - we want to show the sub-segments individually
-  const hasUserSelectedSegments = selectedSegmentNames.length > 0
+  const regularSegments = filters.segments || []
+  const hasUserSelectedSegments = selectedSegmentNames.length > 0 || regularSegments.length > 0
 
   // Determine effective aggregation level (same logic as filterData and prepareGroupedBarData)
   let effectiveAggregationLevel = aggregationLevel
@@ -1158,7 +1176,8 @@ export function prepareLineChartData(
     const segmentsFromSameType = advancedSegments.filter(
       (seg: any) => seg.type === filters.segmentType
     )
-    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0
+    // Check both advancedSegments AND regular segments (from SegmentMultiSelect)
+    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0 || regularSegments.length > 0
 
     if (!hasSegmentsForCurrentType) {
       // No segments selected for this segment type - default to Level 2 (show parent segments)
@@ -1371,9 +1390,10 @@ export function prepareTableData(
     .filter((seg: any) => seg.type === filters.segmentType)
     .map((seg: any) => seg.segment)
 
-  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button),
+  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button or SegmentMultiSelect),
   // we should NOT apply automatic Level 2 aggregation - we want to show the sub-segments individually
-  const hasUserSelectedSegments = selectedSegmentNames.length > 0
+  const regularSegments = filters.segments || []
+  const hasUserSelectedSegments = selectedSegmentNames.length > 0 || regularSegments.length > 0
 
   // Determine effective aggregation level
   let effectiveAggregationLevel = aggregationLevel
@@ -1381,7 +1401,8 @@ export function prepareTableData(
     const segmentsFromSameType = advancedSegments.filter(
       (seg: any) => seg.type === filters.segmentType
     )
-    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0
+    // Check both advancedSegments AND regular segments (from SegmentMultiSelect)
+    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0 || regularSegments.length > 0
 
     if (!hasSegmentsForCurrentType) {
       effectiveAggregationLevel = 2
@@ -1567,9 +1588,10 @@ export function prepareWaterfallData(
     .filter((seg: any) => seg.type === filters.segmentType)
     .map((seg: any) => seg.segment)
 
-  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button),
+  // IMPORTANT: When user has EXPLICITLY selected segments (via Add Segment button or SegmentMultiSelect),
   // we should NOT apply automatic Level 2 aggregation - we want to show the sub-segments individually
-  const hasUserSelectedSegments = selectedSegmentNames.length > 0
+  const regularSegments = filters.segments || []
+  const hasUserSelectedSegments = selectedSegmentNames.length > 0 || regularSegments.length > 0
 
   // Determine effective aggregation level
   let effectiveAggregationLevel = filters.aggregationLevel
@@ -1577,7 +1599,8 @@ export function prepareWaterfallData(
     const segmentsFromSameType = advancedSegments.filter(
       (seg: any) => seg.type === filters.segmentType
     )
-    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0
+    // Check both advancedSegments AND regular segments (from SegmentMultiSelect)
+    const hasSegmentsForCurrentType = segmentsFromSameType.length > 0 || regularSegments.length > 0
 
     if (!hasSegmentsForCurrentType) {
       effectiveAggregationLevel = 2
@@ -1836,9 +1859,13 @@ export function prepareIntelligentMultiLevelData(
   const hasExplicitLevel1Selection = selectedLevel1Segments.length > 0
 
   // Check if this is a regional segment type (By Region, By State, By Country)
-  const isRegionalSegmentType = filters.segmentType === 'By Region' ||
-                                filters.segmentType === 'By State' ||
-                                filters.segmentType === 'By Country'
+  // Only treat as regional if records have geography overrides (not regular segment records)
+  const isRegionName2 = filters.segmentType === 'By Region' ||
+                        filters.segmentType === 'By State' ||
+                        filters.segmentType === 'By Country'
+  const byRegionIsRegularSegment2 = isRegionName2 && filters.geographies.length > 0 &&
+    records.some(r => r.segment_type === filters.segmentType && filters.geographies.includes(r.geography))
+  const isRegionalSegmentType = isRegionName2 && !byRegionIsRegularSegment2
 
   // Group records by segment (or geography) and find the best representation
   const segmentGroups = new Map<string, DataRecord[]>()
@@ -1973,10 +2000,13 @@ export function prepareIntelligentMultiLevelData(
       return dataPoint
     }
 
-    // Check if this is a regional segment type
-    const isRegionalSegmentType = filters.segmentType === 'By Region' ||
-                                  filters.segmentType === 'By State' ||
-                                  filters.segmentType === 'By Country'
+    // Check if this is a regional segment type (only when geography overrides are active)
+    const isRegionName3 = filters.segmentType === 'By Region' ||
+                          filters.segmentType === 'By State' ||
+                          filters.segmentType === 'By Country'
+    const byRegionIsRegularSegment3 = isRegionName3 && filters.geographies.length > 0 &&
+      records.some(r => r.segment_type === filters.segmentType && filters.geographies.includes(r.geography))
+    const isRegionalSegmentType = isRegionName3 && !byRegionIsRegularSegment3
 
     // Standard logic for non-Global mapping cases
     segmentGroups.forEach((groupRecords, key) => {

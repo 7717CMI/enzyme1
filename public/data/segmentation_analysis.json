@@ -1,23 +1,40 @@
 {
-  "Global": {
-    "By Product Type": {
-      "DDGS (Distillers Dried Grains with Solubles)": {},
-      "Corn Oil": {},
-      "Fermentation CO₂": {},
-      "Biogas / CBG": {},
-      "Vinasse / Spent Wash–Derived Products": {},
-      "Others (Wet Cake etc.)": {}
+  "India": {
+    "By Enzyme Type": {
+      "Amylolytic Enzymes": {
+        "α-Amylase": {},
+        "Glucoamylase (GA)": {},
+        "Pullulanase (Debranching)": {}
+      },
+      "Sucrase Family Enzymes": {
+        "Invertase": {},
+        "α-Glucosidase": {},
+        "Others (Pectinase etc.)": {}
+      },
+      "Cellulosic Ethanol Enzymes (2G)": {
+        "Cellulases": {},
+        "Hemicellulases": {},
+        "Others (Mannanases etc.)": {}
+      },
+      "Fermentation Support Enzymes": {
+        "Proteases": {},
+        "Yeast-enhancement blends": {},
+        "Others (Dextranase. Etc.)": {}
+      },
+      "Others (Laccases, Peroxidases etc.)": {}
     },
-    "By End Use Application": {
-      "Animal Feed & Nutrition": {},
-      "Fertiliser & Soil Amendment": {},
-      "Industrial Energy / Captive Utilities": {},
-      "Industrial Gases & Food/Beverage": {},
-      "Renewable Fuels": {},
-      "Others (Oleochemicals etc.)": {}
+    "By End-User": {
+      "Stand-Alone Grain-Based Distilleries": {},
+      "Sugar-Integrated Molasses / Cane Juice Distilleries": {},
+      "Dual-Feed / Hybrid Sugar-Grain Distilleries": {},
+      "Stand-Alone Industrial Alcohol Distilleries": {},
+      "2G / Advanced Bioethanol Plants": {}
     },
     "By Region": {
-      "India": {}
+      "North India": {},
+      "South India": {},
+      "East India": {},
+      "West India": {}
     }
   }
 }

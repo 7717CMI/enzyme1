@@ -504,7 +504,8 @@ async function processSegmentTypeAsync(
   segmentType: string,
   geographies: string[],
   allYears: number[],
-  segmentTypeIndex: number
+  segmentTypeIndex: number,
+  regionIsGeography: boolean = true
 ): Promise<{
   segmentDimension: SegmentDimension
   records: DataRecord[]
@@ -977,7 +978,7 @@ async function processSegmentTypeAsync(
       // For country-level: geography = "U.S." (deepest level)
       // For region-level (self-referencing like North America > North America): geography = "North America"
       const isRegionSegmentType = segmentType === 'By Region' || segmentType === 'By State' || segmentType === 'By Country'
-      if (isRegionSegmentType && segmentPath.length > 0 && segmentPath[0]) {
+      if (isRegionSegmentType && regionIsGeography && segmentPath.length > 0 && segmentPath[0]) {
         const regionName = segmentPath[0]
         const entityName = segmentPath.length > 1 ? segmentPath[segmentPath.length - 1] : regionName
         // If the entity name equals the region name, it's a region aggregate
@@ -1268,9 +1269,21 @@ export async function processJsonDataAsync(
 
     // Extract regions AND countries from "By Region" segment type as additional geographies
     // This builds a full geography hierarchy: Global > Regions > Countries
+    // Only treat "By Region" as geography when its children have their own data in value/volume files
     const regionGeographies: string[] = []
     const regionToCountries: Record<string, string[]> = {}
     const allCountries: string[] = []
+
+    // Build a set of keys that have actual data in value/volume files
+    const dataKeys = new Set<string>()
+    if (valueData && typeof valueData === 'object') {
+      Object.keys(valueData).forEach(k => dataKeys.add(k))
+    }
+    if (volumeData && typeof volumeData === 'object') {
+      Object.keys(volumeData).forEach(k => dataKeys.add(k))
+    }
+
+    let byRegionIsGeography = false
     for (const topGeo of geographies) {
       const geoData = structureData[topGeo]
       if (geoData && typeof geoData === 'object') {
@@ -1282,26 +1295,36 @@ export async function processJsonDataAsync(
             const value = byRegionData[key]
             return value && typeof value === 'object' && !Array.isArray(value)
           })
-          regions.forEach(region => {
-            if (!regionGeographies.includes(region) && !geographies.includes(region)) {
-              regionGeographies.push(region)
-            }
-            // Extract countries under each region (second level keys, excluding the region name itself)
-            const regionData = byRegionData[region]
-            if (regionData && typeof regionData === 'object') {
-              const countries = Object.keys(regionData).filter(key => {
-                return key !== region && typeof regionData[key] === 'object' && !Array.isArray(regionData[key])
-              })
-              if (countries.length > 0) {
-                regionToCountries[region] = countries
-                countries.forEach(country => {
-                  if (!allCountries.includes(country)) {
-                    allCountries.push(country)
-                  }
-                })
+
+          // Check if any of these regions exist as top-level keys in data files
+          // If they do, "By Region" is a geography dimension; otherwise it's a segment type
+          const regionsInData = regions.filter(r => dataKeys.has(r))
+
+          if (regionsInData.length > 0) {
+            byRegionIsGeography = true
+            regions.forEach(region => {
+              if (!regionGeographies.includes(region) && !geographies.includes(region)) {
+                regionGeographies.push(region)
               }
-            }
-          })
+              // Extract countries under each region (second level keys, excluding the region name itself)
+              const regionData = byRegionData[region]
+              if (regionData && typeof regionData === 'object') {
+                const countries = Object.keys(regionData).filter(key => {
+                  return key !== region && typeof regionData[key] === 'object' && !Array.isArray(regionData[key])
+                })
+                if (countries.length > 0) {
+                  regionToCountries[region] = countries
+                  countries.forEach(country => {
+                    if (!allCountries.includes(country)) {
+                      allCountries.push(country)
+                    }
+                  })
+                }
+              }
+            })
+          } else {
+            console.log('"By Region" children not found in data files - treating as segment type, not geography')
+          }
         }
       }
     }
@@ -1334,8 +1357,11 @@ export async function processJsonDataAsync(
     }
     console.log(`Found ${segmentTypes.size} segment types:`, Array.from(segmentTypes))
 
-    // Remove "By Region" (and similar) from segment types - these are geography dimensions, not segments
-    segmentTypes.delete('By Region')
+    // Remove geography dimension types from segment types
+    // Only remove "By Region" if it was detected as a geography dimension (its children have data files)
+    if (byRegionIsGeography) {
+      segmentTypes.delete('By Region')
+    }
     segmentTypes.delete('By State')
     segmentTypes.delete('By Country')
     console.log(`Segment types after removing geography types:`, Array.from(segmentTypes))
@@ -1379,6 +1405,7 @@ export async function processJsonDataAsync(
     
     for (const segmentType of segmentTypes) {
       console.log(`Processing segment type: ${segmentType}`)
+      const isRegionType = segmentType === 'By Region' || segmentType === 'By State' || segmentType === 'By Country'
       const { segmentDimension, records } = await processSegmentTypeAsync(
         structureData, // Use segmentation data for structure
         valueData,     // Use value data for numeric values
@@ -1386,7 +1413,8 @@ export async function processJsonDataAsync(
         segmentType,
         geographies,
         allYears,
-        segmentTypeIndex
+        segmentTypeIndex,
+        isRegionType ? byRegionIsGeography : true
       )
       segments[segmentType] = segmentDimension
       valueRecords.push(...records)
@@ -1397,8 +1425,11 @@ export async function processJsonDataAsync(
 
     // Process "By Region" data separately for geography-based records
     // These records are NOT added to segment types but provide data for region/country geographies
+    // ONLY process here if the geo segment type was removed from segmentTypes (i.e., treated as geography)
     const geoSegmentTypes = ['By Region', 'By State', 'By Country']
     for (const geoSegType of geoSegmentTypes) {
+      // Skip if this type is still in segmentTypes (already processed above)
+      if (segmentTypes.has(geoSegType)) continue
       // Check if this geo segment type exists in the structure data
       const hasGeoSegType = Object.values(structureData).some(
         (geo: any) => geo && typeof geo === 'object' && geo[geoSegType]
@@ -1423,6 +1454,7 @@ export async function processJsonDataAsync(
     if (volumeData) {
       console.log('Processing volume data...')
       for (const segmentType of segmentTypes) {
+        const isRegionType = segmentType === 'By Region' || segmentType === 'By State' || segmentType === 'By Country'
         const { records: volumeRecs } = await processSegmentTypeAsync(
           structureData,
           volumeData,  // Use volume data for numeric values
@@ -1430,12 +1462,16 @@ export async function processJsonDataAsync(
           segmentType,
           geographies,
           allYears,
-          segmentTypeIndex
+          segmentTypeIndex,
+          isRegionType ? byRegionIsGeography : true
         )
         volumeRecords.push(...volumeRecs)
       }
       // Also process "By Region" geography records for volume
+      // ONLY process here if the geo segment type was removed from segmentTypes (i.e., treated as geography)
       for (const geoSegType of geoSegmentTypes) {
+        // Skip if this type is still in segmentTypes (already processed above)
+        if (segmentTypes.has(geoSegType)) continue
         const hasGeoSegType = Object.values(structureData).some(
           (geo: any) => geo && typeof geo === 'object' && geo[geoSegType]
         )
@@ -1472,7 +1508,7 @@ export async function processJsonDataAsync(
     
     // Build metadata
     const metadata: Metadata = {
-      market_name: 'Ethanol Refinery Co-Products Market',
+      market_name: 'Yeast Demand in Indian Ethanol Market',
       market_type: 'Market Analysis',
       industry: 'Healthcare & Pharmaceuticals',
       years: allYears,
