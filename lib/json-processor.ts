@@ -1508,7 +1508,7 @@ export async function processJsonDataAsync(
     
     // Build metadata
     const metadata: Metadata = {
-      market_name: 'Yeast Demand in Indian Ethanol Market',
+      market_name: 'Enzymes Demand in Indian Ethanol Market',
       market_type: 'Market Analysis',
       industry: 'Healthcare & Pharmaceuticals',
       years: allYears,

@@ -204,7 +204,7 @@ export default function DashboardPage() {
                 Coherent Dashboard
               </h1>
               <h2 className="text-sm text-black">
-                {dashboardName || 'Yeast Demand in Indian Ethanol Market'}
+                {dashboardName || 'Enzymes Demand in Indian Ethanol Market'}
               </h2>
             </div>
           </div>
